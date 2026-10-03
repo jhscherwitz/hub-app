@@ -1,3 +1,5 @@
+import type { CanvasData } from './canvas';
+import type { Countdown, Extras } from './extras';
 import type { HabitsView } from './habits';
 import type { PlacedWidget } from './layout';
 import type { HourlyWeather, WeatherKind } from './weather';
@@ -240,6 +242,10 @@ export interface SettingsView {
     /** False when running from the terminal (npm run dev): only the installed app can start at login. */
     available: boolean;
   };
+  /** Missing from older versions. */
+  canvas?: { connected: boolean; origin?: string };
+  /** Missing from older versions. */
+  theme?: ThemeName;
   background: {
     /** True when the user picked their own picture. */
     custom: boolean;
@@ -247,6 +253,18 @@ export interface SettingsView {
     version: number;
   };
 }
+
+/** Accent colours to pick from. Purple is the default. */
+export const THEMES = [
+  { id: 'purple', name: 'Purple', color: '#3e0080', light: '#bd80ff' },
+  { id: 'ocean', name: 'Ocean', color: '#00468c', light: '#6ec8ff' },
+  { id: 'forest', name: 'Forest', color: '#005a3c', light: '#78e6aa' },
+  { id: 'ember', name: 'Ember', color: '#8c1e14', light: '#ff966e' },
+  { id: 'rose', name: 'Rose', color: '#6b0f3c', light: '#ff8cc6' },
+  { id: 'graphite', name: 'Graphite', color: '#2c3242', light: '#c7d0e2' },
+] as const;
+
+export type ThemeName = (typeof THEMES)[number]['id'];
 
 /** The API the preload script exposes on `window.hub`. */
 export interface HubApi {
@@ -277,6 +295,8 @@ export interface HubApi {
   runMorningNow(): Promise<SettingsView>;
   /** Ask the AI for a fresh briefing now. */
   rewriteBriefing(): Promise<void>;
+  /** Searches the whole mailbox and about a year of calendar (when signed in). */
+  search(query: string): Promise<{ emails: EmailMessage[]; events: CalendarEvent[] }>;
   /** Write a reply to an email and save it as a Gmail draft. Never sends. */
   draftReply(emailId: string): Promise<SavedDraft>;
   previewWrapUp(): Promise<WrapUpPreview>;
@@ -298,6 +318,16 @@ export interface HubApi {
   /** Opens a folder picker; resolves with the library (unchanged if they cancel). */
   chooseMusicFolder(): Promise<MusicLibrary>;
   forgetMusicFolder(): Promise<MusicLibrary>;
+  /** Canvas classes, grades and upcoming work, or null when Canvas isn't connected. */
+  getCanvas(force?: boolean): Promise<CanvasData | null>;
+  /** Checks the address and token with Canvas, then saves the token encrypted. */
+  connectCanvas(address: string, token: string): Promise<SettingsView>;
+  disconnectCanvas(): Promise<SettingsView>;
+  setTheme(theme: ThemeName): Promise<SettingsView>;
+  /** Countdowns and the sticky note. */
+  getExtras(): Promise<Extras>;
+  setCountdowns(list: Countdown[]): Promise<Extras>;
+  setNote(text: string): Promise<Extras>;
   /** Daily tasks: the same list every day, ticked off and reset at midnight. */
   getHabits(): Promise<HabitsView>;
   toggleHabit(id: string): Promise<HabitsView>;

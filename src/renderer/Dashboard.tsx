@@ -11,6 +11,7 @@ import { ChatPage } from './pages/ChatPage';
 import { InboxPage } from './pages/InboxPage';
 import { TodayPage } from './pages/TodayPage';
 import { Deck } from './components/Deck';
+import { SearchBar, type SearchActions } from './components/SearchBar';
 import { usePlayer } from './player';
 import { SettingsErrorBoundary, SettingsPanel } from './SettingsPanel';
 import { WrapUpPanel } from './WrapUpPanel';
@@ -52,6 +53,7 @@ export function Dashboard() {
   const [settings, setSettings] = useState<SettingsView | null>(null);
   // Kept here so the conversation survives switching pages.
   const [chat, setChat] = useState<ChatTurn[]>([]);
+  const [ask, setAsk] = useState<string | null>(null);
   const date = new Date(now);
   const usingSample = snapshot?.sources.some((s) => s.kind === 'sample');
   const failed = snapshot?.sources.filter((s) => !s.ok) ?? [];
@@ -71,6 +73,12 @@ export function Dashboard() {
   useEffect(() => {
     void window.hub.getSettings().then(setSettings);
   }, [snapshot, settingsOpen]);
+
+  // The theme lives on the page root so every colour follows it.
+  const theme = settings?.theme ?? 'purple';
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   // Load the user's own background picture whenever it changes in Settings.
   const backgroundVersion = settings?.background?.version ?? 0;
@@ -107,6 +115,24 @@ export function Dashboard() {
     }
   }
 
+  const searchActions: SearchActions = {
+    go: (p) => {
+      setPage(p);
+      setEditing(false);
+    },
+    openSettings: () => setSettingsOpen(true),
+    customize: () => {
+      setPage('today');
+      setEditing(true);
+    },
+    wrapUp: () => setWrapUpOpen(true),
+    refresh: () => void refresh(),
+    ask: (question) => {
+      setPage('chat');
+      setAsk(question);
+    },
+  };
+
   const ctx: WidgetContext | null = snapshot
     ? {
         snapshot,
@@ -114,6 +140,7 @@ export function Dashboard() {
         onWrapUp: () => setWrapUpOpen(true),
         onOpenSettings: () => setSettingsOpen(true),
         onOpenCalendar: () => setPage('calendar'),
+        player,
       }
     : null;
 
@@ -188,6 +215,7 @@ export function Dashboard() {
               Sample data
             </button>
           )}
+          {snapshot && <SearchBar snapshot={snapshot} player={player} now={now} actions={searchActions} />}
           <span className="topbar-right">
             {weather && (
               <span className="muted">
@@ -263,7 +291,7 @@ export function Dashboard() {
         ) : page === 'tasks' ? (
           <TasksCard tasks={snapshot.tasks} notes={snapshot.notes} />
         ) : (
-          <ChatPage aiOn={aiOn} messages={chat} onMessages={setChat} onOpenSettings={() => setSettingsOpen(true)} />
+          <ChatPage aiOn={aiOn} messages={chat} onMessages={setChat} onOpenSettings={() => setSettingsOpen(true)} ask={ask} onAsked={() => setAsk(null)} />
         )}
 
         {snapshot && (

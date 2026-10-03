@@ -2,8 +2,11 @@ import path from 'node:path';
 import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, powerMonitor, protocol, safeStorage, session, shell } from 'electron';
 import type { CaptureInput, DashboardSnapshot, MorningSettings, Place, SettingsView } from '../src/shared/types';
 import { BackgroundStore } from './background';
+import { CanvasClient } from './canvas';
+import { ExtrasStore } from './extras';
 import { HabitStore } from './habits';
 import { LayoutStore } from './layout';
+import { canvasOrigin } from '../src/shared/canvas';
 import { MusicFolder, browserUserAgent, stationNowPlaying } from './media';
 import { GoogleAuth } from './google/auth';
 import { loadBuiltInGoogleClient } from './google/builtin';
@@ -237,6 +240,8 @@ function settingsView(settings: SettingsStore, google: GoogleAuth, morning: Morn
     morning: { ...settings.morning(), lastRunAt: morning.lastRunAt() },
     startAtLogin: { enabled: settings.startAtLogin(), available: canStartAtLogin() },
     background: { custom: backgroundVersion > 0, version: backgroundVersion },
+    canvas: { connected: Boolean(settings.canvas()), origin: settings.canvas()?.origin },
+    theme: settings.theme(),
   };
 }
 
@@ -275,6 +280,7 @@ app.whenReady().then(async () => {
   backgroundStore = new BackgroundStore(dataDir);
   const layout = new LayoutStore(path.join(dataDir, 'dashboard.json'));
   const habits = new HabitStore(path.join(dataDir, 'habits.json'));
+  const extras = new ExtrasStore(path.join(dataDir, 'extras.json'));
   const music = new MusicFolder(path.join(dataDir, 'music.json'));
   protocol.handle('hub-media', (request) => music.serve(request));
   // SomaFM refuses some apps' radio requests, so ask like a normal browser.
@@ -312,6 +318,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('hub:remove-task', (_e, id: string) => hub.removeTask(id));
   ipcMain.handle('hub:capture', (_e, input: CaptureInput) => hub.capture(input));
   ipcMain.handle('hub:rewrite-briefing', () => hub.rewriteBriefing());
+  ipcMain.handle('hub:search', (_e, query: string) => hub.search(String(query ?? '')));
   ipcMain.handle('hub:draft-reply', (_e, emailId: string) => hub.draftReply(emailId));
   ipcMain.handle('hub:preview-wrap-up', () => hub.previewWrapUp());
   ipcMain.handle('hub:finish-wrap-up', (_e, input: { carryOver: string[]; note: string }) => hub.finishWrapUp(input));
@@ -405,6 +412,36 @@ app.whenReady().then(async () => {
     music.setFolder(null);
     return music.library();
   });
+  // One Canvas client per address and token, so its 15-minute cache is kept.
+  let canvasCache: { key: string; client: CanvasClient } | null = null;
+  const currentCanvas = (): CanvasClient | null => {
+    const c = settings.canvas();
+    if (!c) return null;
+    const key = `${c.origin}|${c.token}`;
+    if (canvasCache?.key !== key) canvasCache = { key, client: new CanvasClient(c.origin, c.token) };
+    return canvasCache.client;
+  };
+  ipcMain.handle('canvas:get', (_e, force?: boolean) => currentCanvas()?.data(Boolean(force)) ?? null);
+  ipcMain.handle('settings:canvas', async (_e, address: string, token: string) => {
+    const origin = canvasOrigin(String(address ?? ''));
+    const clean = String(token ?? '').trim();
+    if (!origin) throw new Error("That doesn't look like a Canvas address. It's what's in your browser bar on Canvas, like canvas.yourschool.edu.");
+    if (clean.length < 20) throw new Error('That access token looks too short. Copy the whole thing from Canvas.');
+    await new CanvasClient(origin, clean).whoAmI();
+    settings.setCanvas(origin, clean);
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('settings:theme', (_e, theme: string) => {
+    settings.setTheme(String(theme));
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('settings:canvas-off', () => {
+    settings.turnOffCanvas();
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('extras:get', () => extras.get());
+  ipcMain.handle('extras:set-countdowns', (_e, list: unknown) => extras.setCountdowns(list));
+  ipcMain.handle('extras:set-note', (_e, text: unknown) => extras.setNote(text));
   ipcMain.handle('habits:get', () => habits.get());
   ipcMain.handle('habits:toggle', (_e, id: string) => habits.toggle(id));
   ipcMain.handle('habits:add', (_e, title: string) => habits.add(title));
