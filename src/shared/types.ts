@@ -1,3 +1,4 @@
+import type { Countdown, Extras } from './extras';
 import type { HabitsView } from './habits';
 import type { PlacedWidget } from './layout';
 import type { HourlyWeather, WeatherKind } from './weather';
@@ -277,6 +278,8 @@ export interface HubApi {
   runMorningNow(): Promise<SettingsView>;
   /** Ask the AI for a fresh briefing now. */
   rewriteBriefing(): Promise<void>;
+  /** Searches the whole mailbox and about a year of calendar (when signed in). */
+  search(query: string): Promise<{ emails: EmailMessage[]; events: CalendarEvent[] }>;
   /** Write a reply to an email and save it as a Gmail draft. Never sends. */
   draftReply(emailId: string): Promise<SavedDraft>;
   previewWrapUp(): Promise<WrapUpPreview>;
@@ -298,6 +301,10 @@ export interface HubApi {
   /** Opens a folder picker; resolves with the library (unchanged if they cancel). */
   chooseMusicFolder(): Promise<MusicLibrary>;
   forgetMusicFolder(): Promise<MusicLibrary>;
+  /** Countdowns and the sticky note. */
+  getExtras(): Promise<Extras>;
+  setCountdowns(list: Countdown[]): Promise<Extras>;
+  setNote(text: string): Promise<Extras>;
   /** Daily tasks: the same list every day, ticked off and reset at midnight. */
   getHabits(): Promise<HabitsView>;
   toggleHabit(id: string): Promise<HabitsView>;
