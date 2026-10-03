@@ -1,16 +1,19 @@
 import { formatDuration, formatTime } from '../../shared/time';
 import type { Commute, Weather } from '../../shared/types';
 import { Card } from './Card';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
+import { WeatherGlyph } from './WeatherGlyph';
 
-const MODE_ICON: Record<Commute['mode'], string> = { drive: '🚗', transit: '🚆', walk: '🚶', bike: '🚲' };
+const MODE_ICON: Record<Commute['mode'], IconName> = { drive: 'car', transit: 'transit', walk: 'walk', bike: 'bike' };
 
 export function WeatherCard({ weather, commute, now }: { weather: Weather | null; commute: Commute | null; now: number }) {
   return (
     <Card title="Weather & commute" icon="sun" className="weather-card">
       {weather ? (
         <div className="weather">
-          <span className="weather-icon">{weather.icon}</span>
+          <span className="weather-icon">
+            <WeatherGlyph icon={weather.icon} />
+          </span>
           <div>
             <div className="weather-temp">{weather.temperatureF}°</div>
             <div className="weather-condition">{weather.condition}</div>
@@ -38,7 +41,9 @@ export function WeatherCard({ weather, commute, now }: { weather: Weather | null
       )}
       {commute && (
         <div className="commute">
-          <span className="commute-icon">{MODE_ICON[commute.mode]}</span>
+          <span className="commute-icon">
+            <Icon name={MODE_ICON[commute.mode]} size={18} />
+          </span>
           <div>
             <strong>{commute.durationMinutes} min</strong> to {commute.destination}
             {commute.summary ? <span className="muted"> {commute.summary}</span> : null}

@@ -39,7 +39,15 @@ export function TasksCard({ tasks, notes }: { tasks: Task[]; notes: Note[] }) {
     <Card title="Tasks" icon="tasks" className="tasks-card" action={<span className="count">{open.length} open</span>}>
       <AddTask />
       <ul className="list tasks">
-        {tasks.length === 0 && <li className="muted small">No tasks yet. Add one above, or press the quick capture shortcut from anywhere.</li>}
+        {tasks.length === 0 && (
+          <li className="empty-state">
+            <span className="empty-state-icon">
+              <Icon name="check" size={22} />
+            </span>
+            <strong>Nothing on your plate</strong>
+            <span className="muted small">Add a task above, or press the quick capture shortcut from anywhere.</span>
+          </li>
+        )}
         {[...open, ...done].map((t) => {
           const due = dueLabel(t.due);
           return (

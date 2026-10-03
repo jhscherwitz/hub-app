@@ -66,7 +66,7 @@ export function BriefingCard({
       )}
 
       <p className="briefing-headline">{briefing.headline}</p>
-      <ul className="briefing">
+      <ul className="briefing" style={{ ['--points' as string]: Math.min(4, Math.max(1, briefing.points.length)) }}>
         {briefing.points.map((p) => (
           <li key={p}>{p}</li>
         ))}
