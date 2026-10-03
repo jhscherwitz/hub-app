@@ -2,8 +2,16 @@ import path from 'node:path';
 import { BrowserWindow, Notification, app, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, powerMonitor, protocol, safeStorage, session, shell } from 'electron';
 import type { CaptureInput, DashboardSnapshot, MorningSettings, Place, SettingsView } from '../src/shared/types';
 import { BackgroundStore } from './background';
+import { CanvasClient } from './canvas';
+import { ExtrasStore } from './extras';
+import { runActions, undoAction } from './actions';
+import { ReminderScheduler, ReminderStore, sendToPhone } from './reminders';
+import { newPhoneTopic } from '../src/shared/reminders';
+import { parseWhen } from '../src/shared/when';
+import { randomInt } from 'node:crypto';
 import { HabitStore } from './habits';
 import { LayoutStore } from './layout';
+import { canvasOrigin } from '../src/shared/canvas';
 import { MusicFolder, browserUserAgent, stationNowPlaying } from './media';
 import { GoogleAuth } from './google/auth';
 import { loadBuiltInGoogleClient } from './google/builtin';
@@ -237,6 +245,9 @@ function settingsView(settings: SettingsStore, google: GoogleAuth, morning: Morn
     morning: { ...settings.morning(), lastRunAt: morning.lastRunAt() },
     startAtLogin: { enabled: settings.startAtLogin(), available: canStartAtLogin() },
     background: { custom: backgroundVersion > 0, version: backgroundVersion },
+    canvas: { connected: Boolean(settings.canvas()), origin: settings.canvas()?.origin },
+    theme: settings.theme(),
+    phone: { on: Boolean(settings.phoneTopic()), topic: settings.phoneTopic() ?? undefined },
   };
 }
 
@@ -275,6 +286,22 @@ app.whenReady().then(async () => {
   backgroundStore = new BackgroundStore(dataDir);
   const layout = new LayoutStore(path.join(dataDir, 'dashboard.json'));
   const habits = new HabitStore(path.join(dataDir, 'habits.json'));
+  const extras = new ExtrasStore(path.join(dataDir, 'extras.json'));
+  const reminders = new ReminderStore(path.join(dataDir, 'reminders.json'));
+  const reminderScheduler = new ReminderScheduler(
+    reminders,
+    () => settings.phoneTopic(),
+    (r) => {
+      if (!Notification.isSupported()) return;
+      const n = new Notification({ title: 'Reminder', body: r.text, icon: nativeImage.createFromPath(path.join(ASSETS_DIR, 'icon.png')) });
+      n.on('click', () => showDashboard());
+      n.show();
+    },
+    () => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send('hub:reminders');
+    },
+  );
+  reminderScheduler.start();
   const music = new MusicFolder(path.join(dataDir, 'music.json'));
   protocol.handle('hub-media', (request) => music.serve(request));
   // SomaFM refuses some apps' radio requests, so ask like a normal browser.
@@ -308,10 +335,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('hub:get-snapshot', () => hub.get());
   ipcMain.handle('hub:refresh', () => hub.refresh());
   ipcMain.handle('hub:set-task-done', (_e, id: string, done: boolean) => hub.setTaskDone(id, done));
-  ipcMain.handle('hub:add-task', (_e, title: string) => hub.addTask(title));
+  ipcMain.handle('hub:add-task', async (_e, title: string) => {
+    await hub.addTask(String(title ?? ''));
+  });
   ipcMain.handle('hub:remove-task', (_e, id: string) => hub.removeTask(id));
   ipcMain.handle('hub:capture', (_e, input: CaptureInput) => hub.capture(input));
   ipcMain.handle('hub:rewrite-briefing', () => hub.rewriteBriefing());
+  ipcMain.handle('hub:search', (_e, query: string) => hub.search(String(query ?? '')));
   ipcMain.handle('hub:draft-reply', (_e, emailId: string) => hub.draftReply(emailId));
   ipcMain.handle('hub:preview-wrap-up', () => hub.previewWrapUp());
   ipcMain.handle('hub:finish-wrap-up', (_e, input: { carryOver: string[]; note: string }) => hub.finishWrapUp(input));
@@ -360,6 +390,54 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('hub:summarize-inbox', () => hub.summarizeInbox());
   ipcMain.handle('hub:chat', (_e, messages: ChatMessage[]) => hub.chat(messages));
+  const actionDeps = { hub, extras, habits, reminders };
+  const remindersChanged = () => {
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send('hub:reminders');
+    // Hand anything within three days to the phone straight away.
+    void reminderScheduler.tick();
+  };
+  ipcMain.handle('hub:chat-act', async (_e, messages: ChatMessage[]) => {
+    const { reply, actions } = await hub.chatAct(
+      messages,
+      habits.get().habits.map((h) => h.title),
+    );
+    const results = await runActions(actions, actionDeps);
+    if (results.some((r) => r.type === 'remind' && r.ok)) remindersChanged();
+    return { reply, actions: results };
+  });
+  ipcMain.handle('hub:undo-action', async (_e, token: string) => {
+    await undoAction(String(token), actionDeps);
+    if (String(token).startsWith('reminder:')) remindersChanged();
+  });
+  ipcMain.handle('reminders:list', () => reminders.list());
+  ipcMain.handle('reminders:add', (_e, text: string) => {
+    const parsed = parseWhen(String(text ?? ''));
+    if (!parsed.date) throw new Error('Add a time, like “call mom at 6pm” or “quiz tomorrow 9am”.');
+    const [y, m, d] = parsed.date.split('-').map(Number);
+    const [h, min] = (parsed.time ?? '09:00').split(':').map(Number);
+    reminders.add(parsed.title || String(text), new Date(y, m - 1, d, h, min).toISOString());
+    remindersChanged();
+    return reminders.list();
+  });
+  ipcMain.handle('reminders:remove', (_e, id: string) => {
+    const list = reminders.remove(String(id));
+    remindersChanged();
+    return list;
+  });
+  ipcMain.handle('settings:phone-on', () => {
+    if (!settings.phoneTopic()) settings.setPhoneTopic(newPhoneTopic(() => randomInt(0, 1_000_000) / 1_000_000));
+    void reminderScheduler.tick();
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('settings:phone-off', () => {
+    settings.setPhoneTopic(null);
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('settings:phone-test', async () => {
+    const topic = settings.phoneTopic();
+    if (!topic) throw new Error('Turn on phone reminders first.');
+    await sendToPhone(topic, 'Life Hub is connected. Your reminders will show up here.');
+  });
   ipcMain.handle('settings:morning', (_e, input: MorningSettings) => {
     if (!parseTime(input.time)) throw new Error('Pick a time for the morning update.');
     settings.setMorning(input);
@@ -405,6 +483,36 @@ app.whenReady().then(async () => {
     music.setFolder(null);
     return music.library();
   });
+  // One Canvas client per address and token, so its 15-minute cache is kept.
+  let canvasCache: { key: string; client: CanvasClient } | null = null;
+  const currentCanvas = (): CanvasClient | null => {
+    const c = settings.canvas();
+    if (!c) return null;
+    const key = `${c.origin}|${c.token}`;
+    if (canvasCache?.key !== key) canvasCache = { key, client: new CanvasClient(c.origin, c.token) };
+    return canvasCache.client;
+  };
+  ipcMain.handle('canvas:get', (_e, force?: boolean) => currentCanvas()?.data(Boolean(force)) ?? null);
+  ipcMain.handle('settings:canvas', async (_e, address: string, token: string) => {
+    const origin = canvasOrigin(String(address ?? ''));
+    const clean = String(token ?? '').trim();
+    if (!origin) throw new Error("That doesn't look like a Canvas address. It's what's in your browser bar on Canvas, like canvas.yourschool.edu.");
+    if (clean.length < 20) throw new Error('That access token looks too short. Copy the whole thing from Canvas.');
+    await new CanvasClient(origin, clean).whoAmI();
+    settings.setCanvas(origin, clean);
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('settings:theme', (_e, theme: string) => {
+    settings.setTheme(String(theme));
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('settings:canvas-off', () => {
+    settings.turnOffCanvas();
+    return settingsView(settings, google, morning);
+  });
+  ipcMain.handle('extras:get', () => extras.get());
+  ipcMain.handle('extras:set-countdowns', (_e, list: unknown) => extras.setCountdowns(list));
+  ipcMain.handle('extras:set-note', (_e, text: unknown) => extras.setNote(text));
   ipcMain.handle('habits:get', () => habits.get());
   ipcMain.handle('habits:toggle', (_e, id: string) => habits.toggle(id));
   ipcMain.handle('habits:add', (_e, title: string) => habits.add(title));

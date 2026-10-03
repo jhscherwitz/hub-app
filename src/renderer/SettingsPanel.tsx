@@ -1,5 +1,5 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { Place, SettingsView } from '../shared/types';
+import { THEMES, type Place, type SettingsView } from '../shared/types';
 import { errorText } from './hooks';
 
 function useAction() {
@@ -269,6 +269,171 @@ function AiSection({ view, onChange }: { view: SettingsView; onChange: (v: Setti
   );
 }
 
+function PhoneSection({ view, onChange }: { view: SettingsView; onChange: (v: SettingsView) => void }) {
+  const phone = view.phone!;
+  const { busy, error, run } = useAction();
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  return (
+    <section className="settings-section">
+      <h3>Phone reminders</h3>
+      <p className="muted small">
+        Get your reminders on your phone, free, through the ntfy app (no account). Reminders up to 3 days ahead arrive on time even if this computer is
+        off.
+      </p>
+      {!phone.on ? (
+        <div className="settings-actions">
+          <button className="button button-primary" disabled={busy} onClick={() => void run(async () => onChange(await window.hub.phoneOn()))}>
+            Set up phone reminders
+          </button>
+        </div>
+      ) : (
+        <>
+          <ol className="steps small">
+            <li>
+              Install the free{' '}
+              <button className="link-button" onClick={() => window.hub.openExternal('https://docs.ntfy.sh/subscribe/phone/')}>
+                ntfy app
+              </button>{' '}
+              on your phone (iPhone or Android).
+            </li>
+            <li>
+              In ntfy, tap <strong>+</strong> (Subscribe to topic) and type this name exactly:
+            </li>
+          </ol>
+          <div className="phone-topic">
+            <code>{phone.topic}</code>
+            <button
+              className="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(phone.topic ?? '').then(() => setCopied(true));
+              }}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <ol className="steps small" start={3}>
+            <li>Click Send a test. It should pop up on your phone in a few seconds.</li>
+          </ol>
+          <div className="settings-actions">
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await window.hub.phoneTest();
+                  setSent(true);
+                })
+              }
+            >
+              {sent ? 'Sent! Check your phone' : 'Send a test'}
+            </button>
+            <button className="link-button" disabled={busy} onClick={() => void run(async () => onChange(await window.hub.phoneOff()))}>
+              Turn off
+            </button>
+          </div>
+          <p className="muted small">The name is long and random so nobody can guess it. Reminder text passes through ntfy.sh, so don't put passwords in reminders.</p>
+        </>
+      )}
+      {error && <p className="settings-error">{error}</p>}
+    </section>
+  );
+}
+
+function ThemeSection({ view, onChange }: { view: SettingsView; onChange: (v: SettingsView) => void }) {
+  const { error, run } = useAction();
+  return (
+    <section className="settings-section">
+      <h3>Theme</h3>
+      <p className="muted small">The accent colour for buttons, highlights and glows.</p>
+      <div className="theme-picker" role="radiogroup" aria-label="Theme">
+        {THEMES.map((t) => (
+          <button
+            key={t.id}
+            role="radio"
+            aria-checked={view.theme === t.id}
+            className={view.theme === t.id ? 'is-on' : ''}
+            onClick={() => void run(async () => onChange(await window.hub.setTheme(t.id)))}
+          >
+            <span className="theme-swatch" style={{ background: `linear-gradient(135deg, ${t.color}, ${t.light})` }} />
+            {t.name}
+          </button>
+        ))}
+      </div>
+      {error && <p className="settings-error">{error}</p>}
+    </section>
+  );
+}
+
+function CanvasSection({ view, onChange }: { view: SettingsView; onChange: (v: SettingsView) => void }) {
+  const canvas = view.canvas!;
+  const [address, setAddress] = useState('');
+  const [token, setToken] = useState('');
+  const { busy, error, run } = useAction();
+  const settingsUrl = (() => {
+    try {
+      return address.trim() ? `${new URL(/^https?:\/\//.test(address.trim()) ? address.trim() : `https://${address.trim()}`).origin}/profile/settings` : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const connect = (e: FormEvent) => {
+    e.preventDefault();
+    void run(async () => {
+      onChange(await window.hub.connectCanvas(address, token));
+      setToken('');
+    });
+  };
+
+  return (
+    <section className="settings-section">
+      <h3>Canvas grades</h3>
+      <p className="muted small">Shows your current grade in each class, and puts Canvas assignments in Due soon and search. Free; uses a key you make in Canvas.</p>
+      {canvas.connected ? (
+        <div className="settings-actions">
+          <span>
+            <span className="status-dot ok" /> Connected <span className="muted">· {canvas.origin?.replace('https://', '')}</span>
+          </span>
+          <button className="link-button" disabled={busy} onClick={() => void run(async () => onChange(await window.hub.disconnectCanvas()))}>
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <>
+          <ol className="steps small">
+            <li>Type your school's Canvas address below (what your browser shows on Canvas, like canvas.yourschool.edu).</li>
+            <li>
+              In Canvas, open{' '}
+              {settingsUrl ? (
+                <button className="link-button" onClick={() => window.hub.openExternal(settingsUrl)}>
+                  Account, Settings
+                </button>
+              ) : (
+                'Account, Settings'
+              )}
+              , scroll to Approved Integrations, and click <strong>+ New Access Token</strong>.
+            </li>
+            <li>For Purpose type Life Hub, leave the date empty, click Generate Token, and copy it.</li>
+            <li>Paste it here and click Connect.</li>
+          </ol>
+          <form onSubmit={connect} className="settings-stack">
+            <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="canvas.yourschool.edu" spellCheck={false} />
+            <div className="settings-inline">
+              <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Paste your access token" spellCheck={false} />
+              <button className="button button-primary" type="submit" disabled={busy || !address.trim() || !token.trim()}>
+                {busy ? 'Checking…' : 'Connect'}
+              </button>
+            </div>
+          </form>
+          <p className="muted small">The token is saved encrypted on this computer and only sent to your school's Canvas. If there's no New Access Token button, your school has turned them off.</p>
+        </>
+      )}
+      {error && <p className="settings-error">{error}</p>}
+    </section>
+  );
+}
+
 function lastRunText(iso: string | undefined): string {
   if (!iso) return "Hasn't run yet.";
   const at = new Date(iso);
@@ -440,8 +605,11 @@ export function SettingsPanel({ onClose, onChange }: { onClose: () => void; onCh
             {view.ai && 'provider' in view.ai && <AiSection view={view} onChange={setView} />}
             {/* Missing when the screen updated but the rest of Life Hub is still the old version. */}
             {view.morning ? <MorningSection view={view} onChange={setView} /> : <RestartNotice />}
+            {view.canvas && <CanvasSection view={view} onChange={setView} />}
             <WeatherSection view={view} onChange={setView} />
             {/* Missing when the screen updated but the rest of Life Hub is still the old version. */}
+            {view.phone && <PhoneSection view={view} onChange={setView} />}
+            {view.theme && <ThemeSection view={view} onChange={setView} />}
             {view.background && <BackgroundSection view={view} onChange={setView} />}
             <section className="settings-section">
               <h3>Tasks</h3>
